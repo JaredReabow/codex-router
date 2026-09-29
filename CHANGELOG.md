@@ -1,6 +1,12 @@
 # Changelog
 
 ## Unreleased
+- **DeepSeek can resume saved tool calls with interleaved assistant commentary.**
+  Codex can store an assistant comment between a call and its result. DeepSeek's
+  strict Responses parser interprets that as a missing result. Completed,
+  unambiguous tool groups now replay with their commentary before their calls,
+  preserving every item and the on-disk transcript. The same repair applies to
+  compaction; incomplete groups and user-message boundaries remain untouched.
 - **Nemotron 3 Ultra's free OpenRouter route accepts long Codex tool names.**
   NVIDIA rejects function names longer than 96 characters. This route now uses
   the existing reversible name aliases for definitions, stored calls and tool

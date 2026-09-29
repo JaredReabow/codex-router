@@ -87,6 +87,46 @@ test("native DeepSeek receives delegated tasks as supported user messages", () =
   assert.deepEqual(input, original);
 });
 
+test("DeepSeek replays commentary before completed tool-call groups", () => {
+  const call = { type: "function_call", name: "lookup", call_id: "one", arguments: "{}" };
+  const custom = { type: "custom_tool_call", name: "apply_patch", call_id: "two", input: "patch" };
+  const comment = { type: "message", role: "assistant", phase: "commentary", content: "Checking now." };
+  const result = { type: "function_call_output", call_id: "one", output: "value" };
+  const customResult = { type: "custom_tool_call_output", call_id: "two", output: "done" };
+  for (const [input, expected] of [
+    [[call, comment, result], [comment, call, result]],
+    [[call, comment, custom, customResult, result], [comment, call, custom, customResult, result]],
+  ]) {
+    const original = structuredClone(input);
+    const normalized = deepSeekResponsesInput(input);
+    assert.deepEqual(normalized, expected);
+    assert.deepEqual(input, original, "normalization must never change the saved transcript");
+    assert.deepEqual(deepSeekResponsesInput(normalized), normalized);
+    assert.equal(normalized.length, input.length, "every original item must survive exactly once");
+  }
+});
+
+test("DeepSeek replay does not invent results or move messages across task boundaries", () => {
+  const call = { type: "function_call", name: "lookup", call_id: "one", arguments: "{}" };
+  const comment = { type: "message", role: "assistant", content: "Checking now." };
+  const result = { type: "function_call_output", call_id: "one", output: "value" };
+  for (const input of [
+    [comment, call, result],
+    [call, comment],
+    [call, comment, { ...result, call_id: "unknown" }],
+    [call, comment, call, result],
+    [call, comment, result, result],
+    [call, comment, { ...result, type: "custom_tool_call_output" }],
+    [call, comment, { ...call, type: "custom_tool_call" }, result,
+      { ...result, type: "custom_tool_call_output" }],
+    [call, { ...call, call_id: "two" }, result, comment, { ...result, call_id: "two" }],
+    ...["user", "developer", "system"].map((role) =>
+      [call, comment, { type: "message", role, content: "New instruction" }, result]),
+    [call, comment, { type: "unknown_item" }, result],
+    [call, comment, {}, result],
+  ]) assert.deepEqual(deepSeekResponsesInput(input), input);
+});
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const INTERNAL_KEY = "test-internal-service-key-with-sufficient-length";
 const CALLER_KEY = "test-router-caller-capability-with-sufficient-length";
@@ -329,6 +369,11 @@ test("direct DeepSeek Responses preserves images, reasoning, tools and stream bo
     assert.equal(legacyResult.status, 200);
     assertTranscript(parseEvents(await legacyResult.text()));
     assert.deepEqual(requests.at(-1).body.input.find((item) => item.type === "reasoning"), history[1]);
+    const interleaved = [history[0], history[1], history[3], history[2], history[4]];
+    const replay = await send(interleaved);
+    assert.equal(replay.status, 200);
+    assertTranscript(parseEvents(await replay.text()));
+    assert.deepEqual(requests.at(-1).body.input.map((item) => item.type), history.map((item) => item.type));
     mode = "custom";
     const custom = parseEvents(await (await send("Use the fixture custom tool.")).text());
     assertTranscript(custom);
@@ -414,7 +459,7 @@ test("direct DeepSeek Responses preserves images, reasoning, tools and stream bo
     mode = "normal";
     const compact = await fetch(`${base}/responses/compact`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: MODEL, input: [...history, ...delegated] }),
+      body: JSON.stringify({ model: MODEL, input: [...interleaved, ...delegated] }),
     });
     assert.equal(compact.status, 200);
     await compact.text();
@@ -422,6 +467,7 @@ test("direct DeepSeek Responses preserves images, reasoning, tools and stream bo
     assert.equal(requests.at(-1).body.stream, false);
     assert.equal(requests.at(-1).body.messages, undefined);
     const compactInput = requests.at(-1).body.input;
+    assert.deepEqual(compactInput.slice(0, history.length).map((item) => item.type), history.map((item) => item.type));
     for (const expected of expectedDelegated) {
       assert.deepEqual(compactInput.find((item) =>
         item.content?.[0]?.text === expected.content[0].text), expected);
