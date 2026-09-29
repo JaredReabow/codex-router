@@ -1588,6 +1588,89 @@ test("Command Code forced tool choice uses the same bounded alias as its tool", 
   }
 });
 
+test("curated Nemotron free restores long tools in streaming and JSON responses", async () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "nemotron-tool-names-"));
+  const userModels = path.join(directory, "user-models.json");
+  const upstreamModel = "nvidia/nemotron-3-ultra-550b-a55b:free";
+  const model = `openrouter/${upstreamModel}`;
+  writeFileSync(userModels, JSON.stringify({ version: 1, models: [{
+    slug: model,
+    gatewayModel: "openrouter-nemotron-name-test",
+    upstreamModel,
+    provider: "openrouter",
+    listed: true,
+    displayName: "Nemotron tool-name regression fixture",
+    description: "Synthetic local fixture.",
+    priority: 500,
+    defaultEffort: "high",
+    reasoningLevels: [{ effort: "high", description: "High" }],
+    contextWindow: 1000000,
+    autoCompact: 850000,
+    inputModalities: ["text"],
+    compHash: "nemotron-name-test-user-v1",
+    requestProfile: "auto-tool-choice",
+  }] }));
+  const namespace = "mcp__test";
+  const name = "probe_".padEnd(88, "x");
+  const wireName = `${namespace}__${name}`;
+  assert.equal(wireName.length, 99);
+  const legalName = "boundary_".padEnd(96, "x");
+  const reply = (outgoing) => {
+    const alias = outgoing.tools.find((tool) => tool.description === "Long tool fixture.").name;
+    return { id: "nemotron-name-reply", output: [{
+      type: "function_call", name: alias, call_id: "next", arguments: '{"value":"ok"}',
+    }] };
+  };
+  try {
+    for (const stream of [false, true]) {
+      const result = await scenario(stream, {
+        model,
+        routerEnv: { MODEL_ROUTER_USER_MODELS: userModels },
+        requestPayload: () => ({
+          model, stream,
+          input: [
+            { role: "user", content: "Run the probe again." },
+            { type: "function_call", namespace, name, call_id: "prior", arguments: '{"value":"ok"}' },
+            { type: "function_call_output", call_id: "prior", output: "ok" },
+          ],
+          tools: [
+            ...Array.from({ length: 190 }, (_, index) => ({ type: "function", name: `short_${index}` })),
+            { type: "function", name: legalName },
+            { type: "namespace", name: namespace, tools: [{
+              type: "function", name, description: "Long tool fixture.", parameters: { type: "object" },
+            }] },
+          ],
+          tool_choice: { type: "function", namespace, name },
+        }),
+        jsonBody: reply,
+        sseBody: (outgoing) => [
+          sseEvent({ type: "response.output_item.done", item: reply(outgoing).output[0] }),
+          sseEvent({ type: "response.completed", response: reply(outgoing) }),
+          "data: [DONE]\n\n",
+        ].join(""),
+      });
+      assert.equal(result.gatewayBodies.length, 1);
+      const outgoing = result.gatewayBodies[0];
+      assert.ok(outgoing.tools.every((tool) => tool.name.length <= 96));
+      assert.ok(outgoing.tools.some((tool) => tool.name === legalName));
+      assert.equal(outgoing.tools.filter((tool) => tool.name.startsWith("short_")).length, 190);
+      const alias = outgoing.tools.find((tool) => tool.description === "Long tool fixture.").name;
+      assert.notEqual(alias, wireName);
+      const prior = outgoing.input.find((item) => item.call_id === "prior" && item.type === "function_call");
+      assert.equal(prior.name, alias);
+      assert.equal(prior.namespace, undefined);
+      assert.equal(outgoing.tool_choice, "auto", "existing request profile remains effective");
+      const call = stream
+        ? functionCallsFromSse(result.clientBody).get("next")
+        : JSON.parse(result.clientBody).output[0];
+      assert.deepEqual({ name: call.name, namespace: call.namespace }, { name, namespace });
+      assert.deepEqual(JSON.parse(call.arguments), { value: "ok" });
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("bounded routes preserve one alias for pre-flattened MCP definitions and history", async () => {
   const namespace = "mcp__neon__apm__production__snapshot__read_only";
   const name = "get_monitor_snapshot_with_complete_context";

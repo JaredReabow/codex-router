@@ -1,6 +1,11 @@
 # Changelog
 
 ## Unreleased
+- **Nemotron 3 Ultra's free OpenRouter route accepts long Codex tool names.**
+  NVIDIA rejects function names longer than 96 characters. This route now uses
+  the existing reversible name aliases for definitions, stored calls and tool
+  choices, restoring original tool identities in streaming and JSON replies.
+  Other OpenRouter models retain their existing name handling.
 - **An apostrophe in a harness config no longer moves the router's route into
   somebody else's value.** `yaml-structure.mjs` treated every `'` and `"` as a
   quoting indicator, but YAML only gives a quote that meaning where a node can

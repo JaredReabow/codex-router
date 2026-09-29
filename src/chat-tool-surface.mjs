@@ -219,22 +219,32 @@ function withRequiredAppTools(tools, required) {
 // variants front the same validator. They opt into the router's existing
 // bounded alias route, which is deterministic and reversible, so
 // `rewriteNamespaceResponsePayload()` still restores the client's own identity.
-// Every other non-Groq provider keeps the unbounded surface byte for byte.
+// NVIDIA's free Nemotron endpoint on OpenRouter similarly rejects names over
+// 96 characters (observed HTTP 400 for a 99-character app tool). Scope that
+// limit to the observed upstream model; other OpenRouter endpoints have their
+// own validators. The relay also applies aliases to history and tool choices.
 const BOUNDED_TOOL_NAME_PROVIDERS = new Set(["commandcode", "commandcode-messages"]);
 const BOUNDED_TOOL_NAME_LENGTH = 64;
+
+/** Resolve provider/model tool-name policy without changing sibling routes. */
+function chatToolSurface_nameLimit(providerId, upstreamModel) {
+  if (BOUNDED_TOOL_NAME_PROVIDERS.has(providerId)) return BOUNDED_TOOL_NAME_LENGTH;
+  if (providerId === "openrouter" && upstreamModel === "nvidia/nemotron-3-ultra-550b-a55b:free") {
+    return 96;
+  }
+  return undefined;
+}
 
 export function chatProviderToolSurface(
   tools,
   providerId,
-  { input, toolChoice } = {},
+  { input, toolChoice, upstreamModel } = {},
 ) {
   const merged = mergeCodexAppTools(tools);
   if (providerId !== "groq") {
     return flattenNamespaceTools(
       merged.tools,
-      BOUNDED_TOOL_NAME_PROVIDERS.has(providerId)
-        ? { maxNameLength: BOUNDED_TOOL_NAME_LENGTH }
-        : {},
+      { maxNameLength: chatToolSurface_nameLimit(providerId, upstreamModel) },
     );
   }
 

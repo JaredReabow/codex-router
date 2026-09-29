@@ -407,3 +407,56 @@ test("a non-Command Code chat provider keeps the unbounded 80-character name", (
     "only Command Code opts into the 64-character bound",
   );
 });
+
+const NEMOTRON_FREE_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free";
+
+test("Nemotron free bounds long tool names and preserves its 96-character boundary", () => {
+  const names = [95, 96, 97, 99].map((length) => "probe_".padEnd(length, "x"));
+  const tools = names.map((name) => ({ type: "function", name, parameters: { type: "object" } }));
+  const routed = chatProviderToolSurface(tools, "openrouter", { upstreamModel: NEMOTRON_FREE_MODEL });
+  const repeated = chatProviderToolSurface(tools, "openrouter", { upstreamModel: NEMOTRON_FREE_MODEL });
+  assert.deepEqual(routed.tools, repeated.tools);
+  const clientTools = routed.tools.filter((tool) => tool.name.startsWith("probe_"));
+  assert.equal(clientTools.length, tools.length, "no client tool is dropped");
+  assert.equal(new Set(routed.tools.map((tool) => tool.name)).size, routed.tools.length);
+  assert.ok(routed.tools.every((tool) => tool.name.length <= 96));
+  for (const [index, tool] of clientTools.entries()) {
+    assert.ok(tool.name.length <= 96, `NVIDIA refuses ${tool.name.length} characters`);
+    if (names[index].length <= 96) assert.equal(tool.name, names[index]);
+    const history = flattenNamespacedHistory([
+      { type: "function_call", name: names[index], call_id: "prior", arguments: "{}" },
+    ], routed.namespaces);
+    assert.equal(history[0].name, tool.name);
+    assert.deepEqual(flattenToolChoice({ type: "function", name: names[index] }, routed.namespaces),
+      { type: "function", name: tool.name });
+    const response = { output: [
+      { type: "function_call", name: tool.name, arguments: "{}" },
+    ] };
+    const restored = rewriteNamespaceResponsePayload(response, buildNamespaceLookups(routed.namespaces)) || response;
+    assert.equal(restored.output[0].name, names[index]);
+  }
+});
+
+test("Nemotron free restores long namespaced tools without changing other routes", () => {
+  const namespace = "mcp__test";
+  const name = "probe_".padEnd(88, "x");
+  const wireName = `${namespace}__${name}`;
+  assert.equal(wireName.length, 99, "matches the rejected request's name length");
+  const tools = [{ type: "namespace", name: namespace, tools: [{ type: "function", name }] }];
+  const bounded = chatProviderToolSurface(tools, "openrouter", { upstreamModel: NEMOTRON_FREE_MODEL });
+  assert.ok(bounded.tools[0].name.length <= 96);
+  const restored = rewriteNamespaceResponsePayload({ output: [
+    { type: "function_call", name: bounded.tools[0].name, arguments: "{}" },
+  ] }, buildNamespaceLookups(bounded.namespaces));
+  assert.equal(restored.output[0].name, name);
+  assert.equal(restored.output[0].namespace, namespace);
+  for (const [provider, upstreamModel] of [
+    ["openrouter", "anthropic/claude-opus-5.5"],
+    ["openrouter", "nvidia/nemotron-3-ultra-550b-a55b"],
+    ["openrouter", undefined],
+    ["another-provider", NEMOTRON_FREE_MODEL],
+  ]) {
+    const unchanged = chatProviderToolSurface(tools, provider, { upstreamModel });
+    assert.equal(unchanged.tools[0].name, wireName, `${provider}/${upstreamModel}`);
+  }
+});
