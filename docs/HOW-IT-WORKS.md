@@ -310,6 +310,13 @@ the caller capability is never relayed to an upstream. HTTP request bodies may
 use Zstandard, gzip, deflate, or Brotli; the router safely decompresses them
 before inspecting the model ID.
 
+Codex can interrupt an active response with `response.interrupt` and
+`mode: "discard_partial_items"`. This control bypasses the generation queue,
+aborts the internal HTTP stream, and returns an incomplete response containing
+only completed output items. Those items remain available for the next
+`previous_response_id` continuation. An interrupt arriving just after completion
+is harmless and does not leave an error for the next turn.
+
 Codex can compact history through `/responses/compact` or a
 `compaction_trigger`. External Chat Completions providers cannot create OpenAI's
 opaque encrypted compaction payload. The router therefore assigns stable source

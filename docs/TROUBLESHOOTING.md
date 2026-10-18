@@ -607,6 +607,12 @@ safe. The tool never uploads a bundle automatically.
 
 ## Responses WebSocket does not connect
 
+If a follow-up or interrupted turn reports "Responses WebSocket messages must
+have type response.create", the router may predate support for Codex's
+`response.interrupt` control message. Update the router and restart its service
+with `bin/control service restart`. The corrected adapter processes interruptions
+immediately and preserves completed output when the connection is reused.
+
 Current Codex Router releases accept the Responses WebSocket v2 upgrade on the
 managed caller-capability URL. A 401 means Codex is using a stale managed URL;
 run `./bin/doctor --fix`, then fully quit and reopen Codex. A 426 carrying the

@@ -21,3 +21,13 @@ recorded in CHANGELOG.md and Git history.
   Responses route; preserve all items, original source history and task boundaries.
 - Cover parallel/custom calls, missing/duplicate/mismatched results, idempotence,
   ordinary routed requests and explicit compaction in the existing test harness.
+
+## 2026-10-18 — Codex WebSocket interruption compatibility
+
+- Reproduced the installed router's rejection of Codex's `response.interrupt`
+  control message and the resulting error on the next response.
+- Backported upstream `b850d97d6e5c7876699fc83bc2e3a7e9ed5769fe` while retaining
+  the existing Nemotron and DeepSeek patches. Adapted the terminal size check
+  to this checkout's JSON byte-counting convention.
+- Added the five upstream regression cases for cancellation, completed-item
+  replay, late interrupts, JSON backpressure, and bounded interruption state.

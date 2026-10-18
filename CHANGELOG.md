@@ -1,6 +1,11 @@
 # Changelog
 
 ## Unreleased
+- **Interrupting a Codex response no longer breaks the next turn.** Backported
+  upstream `b850d97d` to accept `response.interrupt` immediately, cancel the
+  active HTTP stream, discard partial items, and preserve completed output for
+  the next request. Late interrupts after completion no longer leave a queued
+  HTTP 400 on the reused WebSocket connection.
 - **DeepSeek can resume saved tool calls with interleaved assistant commentary.**
   Codex can store an assistant comment between a call and its result. DeepSeek's
   strict Responses parser interprets that as a missing result. Completed,

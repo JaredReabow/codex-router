@@ -67,6 +67,7 @@ const PER_REQUEST_IDENTITY_HEADERS = new Set([
   "x-openai-subagent",
 ]);
 const MAX_QUEUED_REQUESTS = 2;
+const MAX_INTERRUPT_PENDING_ITEMS = 256;
 const MAX_FRAGMENT_FRAMES = 1_024;
 const MAX_TURN_METADATA_HEADER_BYTES = 8 * 1_024;
 const MAX_RATE_LIMIT_FAMILIES = 16;
@@ -731,6 +732,8 @@ class ResponsesWebSocketPeer {
     this.abortController = new AbortController();
     this.continuations = new Map();
     this.turnState = undefined;
+    this.activeResponse = undefined;
+    this.lastResponseId = undefined;
   }
 
   start(head) {
@@ -914,13 +917,21 @@ class ResponsesWebSocketPeer {
   }
 
   enqueue(text) {
+    // Control messages must bypass the generation queue: queuing interrupt
+    // behind the turn it interrupts leaves a 400 for the following turn.
+    const request = this.parseRequest(text);
+    if (!request) return;
+    if (request.type === "response.interrupt") {
+      this.interrupt(request);
+      return;
+    }
     this.pendingRequests += 1;
     if (this.pendingRequests > MAX_QUEUED_REQUESTS) {
       this.fail(1008, "Too many queued Responses requests.");
       return;
     }
     this.queue = this.queue
-      .then(() => this.process(text))
+      .then(() => this.process(request))
       .catch(() => {
         if (!this.closed) {
           this.sendError(500, {
@@ -934,7 +945,7 @@ class ResponsesWebSocketPeer {
       });
   }
 
-  async process(text) {
+  parseRequest(text) {
     if (this.closed) return;
     let request;
     try {
@@ -946,13 +957,86 @@ class ResponsesWebSocketPeer {
       });
       return;
     }
-    if (!request || Array.isArray(request) || request.type !== "response.create") {
+    if (!request || typeof request !== "object" || Array.isArray(request) ||
+        !["response.create", "response.interrupt"].includes(request.type)) {
       this.sendError(400, {
         type: "invalid_request_error",
-        message: "Responses WebSocket messages must have type response.create.",
+        code: "unsupported_websocket_event",
+        message: "Responses WebSocket messages must have type response.create or response.interrupt.",
       });
       return;
     }
+    return request;
+  }
+
+  interrupt(request) {
+    if (typeof request.response_id !== "string" || !request.response_id ||
+        request.mode !== "discard_partial_items") {
+      this.sendError(400, {
+        type: "invalid_request_error",
+        message: "response.interrupt requires response_id and mode=discard_partial_items.",
+      });
+      return;
+    }
+    const active = this.activeResponse;
+    // Completion can win the race with a client's interrupt frame. Its
+    // terminal event already settles the turn; do not poison socket reuse.
+    if (request.response_id === this.lastResponseId && active?.id !== request.response_id) return;
+    if (!active || active.id !== request.response_id) {
+      this.sendError(400, {
+        type: "invalid_request_error",
+        code: "response_not_found",
+        message: "The response to interrupt is not active on this connection.",
+      });
+      return;
+    }
+    if (active.interrupted || active.terminalSent) return;
+    active.interrupted = true;
+    this.sendJson({
+      type: "response.interrupt.accepted", response_id: active.id,
+      sequence_number: active.nextSequence++,
+    });
+    active.controller.abort(new Error("Responses generation interrupted by the client."));
+  }
+
+  async finishInterrupted(active) {
+    for (const [output_index, item_id] of active.pendingItems) {
+      if (!(await this.sendJsonWithBackpressure({
+        type: "response.output_item.interrupted", response_id: active.id,
+        item_id, output_index, sequence_number: active.nextSequence++,
+      }))) return;
+    }
+    const terminal = {
+      type: "response.incomplete", sequence_number: active.nextSequence++,
+      response: {
+        id: active.id, object: "response", status: "incomplete",
+        incomplete_details: { reason: "interrupted" },
+        output: active.completedItems,
+        ...(active.usage ? { usage: active.usage } : {}),
+      },
+    };
+    // Completed items are bounded while they arrive; also bound the terminal
+    // envelope using this checkout's existing JSON byte-counting convention.
+    if (Buffer.byteLength(JSON.stringify(terminal), "utf8") > this.options.maxEventBytes) {
+      this.continuations.clear();
+      this.sendError(502, {
+        type: "ERR_RESPONSES_WS_INTERRUPT_STATE_TOO_LARGE",
+        message: "The interrupted response exceeds the bounded WebSocket snapshot size; resend the full context.",
+      });
+      return;
+    }
+    active.terminalSent = true;
+    if (!(await this.sendJsonWithBackpressure(terminal))) return;
+    this.lastResponseId = active.id;
+    this.continuations.clear();
+    const continuation = continuationState(
+      active.input, active.completedItems, this.options.maxContinuationBytes,
+    );
+    if (continuation && !active.continuationOverflow) this.continuations.set(active.id, continuation);
+  }
+
+  async process(request) {
+    if (this.closed) return;
     if (!Array.isArray(request.input) || request.stream !== true) {
       this.sendError(400, {
         type: "invalid_request_error",
@@ -1009,6 +1093,7 @@ class ResponsesWebSocketPeer {
 
     if (request.generate === false) {
       const responseId = `resp_router_prewarm_${randomUUID().replaceAll("-", "")}`;
+      this.lastResponseId = responseId;
       this.continuations.clear();
       this.continuations.set(responseId, { input: fullRequest.input, output: [] });
       await this.sendJsonWithBackpressure({
@@ -1026,6 +1111,13 @@ class ResponsesWebSocketPeer {
     }
 
     const controller = new AbortController();
+    const active = {
+      controller, id: undefined, interrupted: false, terminalSent: false,
+      nextSequence: 0, completedItems: [], pendingItems: new Map(),
+      input: fullRequest.input, continuationOverflow: false,
+      completedBytes: 0, pendingBytes: 0,
+    };
+    this.activeResponse = active;
     const onClose = () => controller.abort(this.abortController.signal.reason);
     this.abortController.signal.addEventListener("abort", onClose, { once: true });
     let upstream;
@@ -1109,21 +1201,30 @@ class ResponsesWebSocketPeer {
           return;
         }
         if (!(await sendSuccessfulResponseHeaders(this, upstream))) return;
+        active.id = completedResponse.id;
+        // The JSON origin has already completed these items and charged its
+        // usage, even if downstream write backpressure delays their delivery.
+        active.completedItems = completedResponse.output;
+        active.usage = completedResponse.usage;
         if (!(await this.sendJsonWithBackpressure({
           type: "response.created",
           response: { ...completedResponse, status: "in_progress", output: [] },
         }))) return;
         for (const [outputIndex, item] of completedResponse.output.entries()) {
+          if (active.interrupted) return;
           if (!(await this.sendJsonWithBackpressure({
             type: "response.output_item.done",
             output_index: outputIndex,
             item,
           }))) return;
         }
+        if (active.interrupted) return;
+        active.terminalSent = true;
         if (!(await this.sendJsonWithBackpressure({
           type: "response.completed",
           response: completedResponse,
         }))) return;
+        this.lastResponseId = completedResponse.id;
         this.continuations.clear();
         const continuation = continuationState(
           fullRequest.input,
@@ -1152,11 +1253,37 @@ class ResponsesWebSocketPeer {
             throw error;
           }
           if (!event || typeof event !== "object" || Array.isArray(event)) return true;
+          // Do not let post-terminal trailers mutate interruption snapshots.
+          if (terminalSeen) return true;
+          if (active.interrupted) return false;
+          if (Number.isSafeInteger(event.sequence_number) && event.sequence_number >= 0) {
+            active.nextSequence = Math.max(active.nextSequence, event.sequence_number + 1);
+          }
+          if (event.type === "response.created" && typeof event.response?.id === "string") active.id = event.response.id;
+          if (event.response?.usage && typeof event.response.usage === "object") active.usage = event.response.usage;
+          if (event.type === "response.output_item.added" &&
+              Number.isSafeInteger(event.output_index) && event.output_index >= 0 &&
+              typeof event.item?.id === "string") {
+            const previous = active.pendingItems.get(event.output_index);
+            const pendingBytes = active.pendingBytes - Buffer.byteLength(previous || "")
+              + Buffer.byteLength(event.item.id);
+            if (pendingBytes > this.options.maxEventBytes ||
+                (!previous && active.pendingItems.size >= MAX_INTERRUPT_PENDING_ITEMS)) {
+              const error = new Error("The interrupted response item tracker exceeds its bounded size.");
+              error.code = "ERR_RESPONSES_WS_INTERRUPT_STATE_TOO_LARGE";
+              throw error;
+            }
+            active.pendingItems.set(event.output_index, event.item.id);
+            active.pendingBytes = pendingBytes;
+          }
+          if (event.type === "response.output_item.done") {
+            active.pendingBytes -= Buffer.byteLength(active.pendingItems.get(event.output_index) || "");
+            active.pendingItems.delete(event.output_index);
+          }
           // Match the Responses client: the first terminal event ends the
           // logical response. Drain the HTTP body for clean accounting and
           // connection reuse, but never graft a provider trailer onto the next
           // continuation baseline.
-          if (terminalSeen) return true;
           // Native Codex maps WebSocket `error` events only when they carry
           // an HTTP failure status. SSE can instead signal failure by ending
           // its body; the persistent socket has no such turn boundary.
@@ -1164,16 +1291,28 @@ class ResponsesWebSocketPeer {
               !(Number.isInteger(event.status) && event.status >= 400 && event.status <= 599)) {
             event = { ...event, status: 502 };
           }
-          if (!(await this.sendJsonWithBackpressure(event))) return false;
+          if (["response.completed", "response.failed", "response.incomplete", "error"].includes(event.type)) {
+            active.terminalSent = true;
+            if (active.id) this.lastResponseId = active.id;
+          }
           if (event.type === "response.output_item.done" && event.item) {
             const itemBytes = Buffer.byteLength(JSON.stringify(event.item), "utf8");
+            if (active.completedBytes + itemBytes > this.options.maxEventBytes) {
+              const error = new Error("The interrupted response snapshot exceeds its bounded size.");
+              error.code = "ERR_RESPONSES_WS_INTERRUPT_STATE_TOO_LARGE";
+              throw error;
+            }
+            active.completedItems.push(event.item);
+            active.completedBytes += itemBytes;
             if (outputItemsBytes + itemBytes <= this.options.maxContinuationBytes) {
               outputItems.push(event.item);
               outputItemsBytes += itemBytes;
             } else {
               continuationOverflow = true;
+              active.continuationOverflow = true;
             }
           }
+          if (!(await this.sendJsonWithBackpressure(event))) return false;
           if (event.type === "response.completed") {
             completed = event.response;
             terminalSeen = true;
@@ -1206,7 +1345,7 @@ class ResponsesWebSocketPeer {
           )
           : undefined;
         if (continuation) this.continuations.set(completed.id, continuation);
-      } else if (!terminalFailure && !this.closed) {
+      } else if (!terminalFailure && !this.closed && !active.interrupted) {
         this.sendError(502, {
           type: "local_router_stream_failed",
           message: "The internal Responses stream ended before response.completed.",
@@ -1222,6 +1361,8 @@ class ResponsesWebSocketPeer {
     } finally {
       this.abortController.signal.removeEventListener("abort", onClose);
       controller.abort();
+      if (active.interrupted && !active.terminalSent && !this.closed) await this.finishInterrupted(active);
+      if (this.activeResponse === active) this.activeResponse = undefined;
     }
   }
 }
