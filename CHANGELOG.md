@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### 0.6.2 — Discover current installed Codex CLIs
+- Recognize the nested ChatGPT/Codex macOS CLI bundle and select the newest
+  reported installed CLI instead of the first matching path. Preserve explicit
+  overrides and router-shim exclusion; invalidate cached versions on executable
+  replacement so the existing five-minute model refresh follows app updates.
+- Restore discovery of GPT-6.1 account models hidden by an older standalone CLI.
+
 ### 0.6.1 — Provider comparison monitoring
 - Capture actual upstream host, generation IDs, reported OpenRouter costs, cache/reasoning tokens, response times and per-attempt failures before gateway translation.
 - Compare routes and context/effort groups in Usage, with explicit task assessments, coverage warnings, configurable UTC budgets and fee assumptions, metadata exports, price drift snapshots and generation reconciliation.

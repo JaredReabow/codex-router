@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   codexBinaryFingerprint,
   codexCandidatePaths,
+  codexNewestInstalledBinary,
   findCodexBinary,
   linuxDesktopAppBundledCodex,
   preferSpawnablePath,
@@ -23,6 +24,85 @@ const NPM_WHERE_OUTPUT = [
   "C:\\Users\\krist\\AppData\\Roaming\\npm\\codex.cmd",
   "",
 ];
+
+test("discovers nested macOS app CLIs in system and user Applications", () => {
+  const paths = codexCandidatePaths({ platform: "darwin", home: "/Users/test" });
+  for (const root of ["/Applications", "/Users/test/Applications"]) {
+    for (const app of ["ChatGPT.app", "Codex.app"]) {
+      assert.ok(paths.includes(`${root}/${app}/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`));
+    }
+  }
+});
+
+test("selects the newest reported CLI instead of the first installed path", () => {
+  const versions = {
+    standalone: "codex-cli 0.155.1",
+    desktop: "codex-cli 0.166.0-alpha.6",
+    broken: undefined,
+    unknown: "development build",
+  };
+  assert.equal(codexNewestInstalledBinary(Object.keys(versions), (p) => versions[p]), "desktop");
+  assert.equal(codexNewestInstalledBinary(["broken", "standalone"], (p) => versions[p]), "standalone");
+  assert.equal(codexNewestInstalledBinary(["unknown"], (p) => versions[p]), "unknown");
+  assert.equal(codexNewestInstalledBinary([]), undefined);
+});
+
+test("release comparison orders numeric prereleases and prefers stable at the same version", () => {
+  for (const [older, newer] of [
+    ["0.166.0-alpha.6", "0.166.0-alpha.10"],
+    ["0.166.0-alpha.10", "0.166.0"],
+    ["0.99.0", "0.100.0-alpha.1"],
+    ["0.166.0-alpha", "0.166.0-alpha.1"],
+    ["0.166.0-1", "0.166.0-alpha"],
+  ]) {
+    const read = (p) => `codex-cli ${p === "a" ? older : newer}`;
+    assert.equal(codexNewestInstalledBinary(["a", "b"], read), "b");
+    assert.equal(codexNewestInstalledBinary(["b", "a"], read), "b");
+  }
+  assert.equal(codexNewestInstalledBinary(["a", "b"], () => "codex-cli 1.0.0"), "a");
+});
+
+test("an updated executable is discovered in the same process without a stale version cache", {
+  skip: process.platform === "win32",
+}, () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "codex-version-replacement-"));
+  const old = path.join(root, "old"), app = path.join(root, "app");
+  const write = (file, version) => {
+    writeFileSync(file, `#!/bin/sh\nprintf 'codex-cli ${version}\\n'\n`);
+    chmodSync(file, 0o700);
+  };
+  try {
+    write(old, "0.155.1");
+    write(app, "0.150.0");
+    assert.equal(codexNewestInstalledBinary([old, app]), old);
+    write(app, "0.166.0-alpha.6");
+    assert.equal(codexNewestInstalledBinary([old, app]), app);
+    writeFileSync(app, "#!/bin/sh\nexit 1\n");
+    assert.equal(codexNewestInstalledBinary([old, app]), old);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an explicit CLI override remains authoritative", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "codex-version-pin-"));
+  const binary = path.join(root, process.platform === "win32" ? "codex.exe" : "codex");
+  writeFileSync(binary, "operator-pinned CLI");
+  const saved = { CODEX_BIN: process.env.CODEX_BIN, CODEX_INSTALL_DIR: process.env.CODEX_INSTALL_DIR };
+  try {
+    process.env.CODEX_BIN = binary;
+    assert.equal(findCodexBinary(), binary);
+    delete process.env.CODEX_BIN;
+    process.env.CODEX_INSTALL_DIR = root;
+    assert.equal(findCodexBinary(), binary);
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("prefers the spawnable shim over the extensionless one on Windows", () => {
   assert.equal(

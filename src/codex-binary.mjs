@@ -58,6 +58,12 @@ export function codexCandidatePaths({
         process.env.CODEX_INSTALL_DIR,
         platform === "win32" ? "codex.exe" : "codex",
       ),
+    ...["/Applications", path.join(home, "Applications")].flatMap((root) =>
+      ["ChatGPT.app", "Codex.app"].map((app) => path.join(
+        root, app, "Contents", "Resources", "codex-cli", "CodexCLI.app",
+        "Contents", "MacOS", "codex",
+      )),
+    ),
     "/Applications/ChatGPT.app/Contents/Resources/codex",
     "/Applications/Codex.app/Contents/Resources/codex",
     "/opt/homebrew/bin/codex",
@@ -75,6 +81,66 @@ function candidates() {
   return codexCandidatePaths();
 }
 
+const binaryVersions = new Map();
+
+/** Probe installed executables without credentials; replacement invalidates the cache. */
+function codexInstalledVersion(binary) {
+  const fingerprint = codexBinaryFingerprint(binary);
+  const cached = binaryVersions.get(binary);
+  if (cached?.fingerprint === fingerprint && Date.now() < cached.expires) {
+    return cached.version;
+  }
+  let version;
+  try {
+    const target = spawnableCommand(binary, ["--version"]);
+    version = execFileSync(target.command, target.args, {
+      ...target.options,
+      encoding: "utf8",
+      timeout: 2_000,
+      maxBuffer: 64 * 1024,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    // A broken candidate must not hide another installed, runnable CLI.
+  }
+  binaryVersions.set(binary, { fingerprint, version, expires: Date.now() + 300_000 });
+  return version;
+}
+
+/** Select by reported release, retaining discovery order for ties or unknown versions. */
+export function codexNewestInstalledBinary(paths, readVersion = codexInstalledVersion) {
+  const parse = (value) => {
+    const match = /(?:^|\s)(\d+)\.(\d+)\.(\d+)(?:-([\w.-]+))?(?:\+[\w.-]+)?(?:\s|$)/.exec(value || "");
+    return match && { release: match.slice(1, 4).map(Number), pre: match[4]?.split(".") };
+  };
+  const newer = (left, right) => {
+    for (let i = 0; i < 3; i += 1) {
+      if (left.release[i] !== right.release[i]) return left.release[i] > right.release[i];
+    }
+    if (!left.pre || !right.pre) return !left.pre && Boolean(right.pre);
+    for (let i = 0; i < Math.max(left.pre.length, right.pre.length); i += 1) {
+      const a = left.pre[i], b = right.pre[i];
+      if (a === b) continue;
+      if (a === undefined || b === undefined) return b === undefined;
+      const an = /^\d+$/.test(a), bn = /^\d+$/.test(b);
+      if (an && bn) return Number(a) > Number(b);
+      if (an !== bn) return !an;
+      return a > b;
+    }
+    return false;
+  };
+  let selected, best;
+  for (const binary of new Set(paths)) {
+    const version = parse(readVersion(binary));
+    if (version && (!best || newer(version, best))) {
+      selected = binary;
+      best = version;
+    }
+  }
+  return selected || paths[0];
+}
+
 // The router must never resolve `codex` to the shim it installs in front of it.
 //
 // The shim's job is to guarantee the router is listening before Codex starts,
@@ -87,18 +153,28 @@ function candidates() {
 // candidate below *and* a directory `chooseShimDirectory` may install into,
 // because it restricts itself to the home directory.
 export function findCodexBinary() {
-  const direct = candidates().find(
-    (candidate) => existsSync(candidate) && !isShimFile(candidate),
-  );
-  if (direct) return direct;
+  const usable = (candidate) => candidate && existsSync(candidate) && !isShimFile(candidate);
+  // An explicit operator pin takes precedence even when another install is newer.
+  const pinned = [
+    process.env.CODEX_BIN,
+    process.env.CODEX_INSTALL_DIR && path.join(
+      process.env.CODEX_INSTALL_DIR, process.platform === "win32" ? "codex.exe" : "codex",
+    ),
+  ].find(usable);
+  if (pinned) return pinned;
+  const installed = candidates().filter(usable);
   // Never the raw first line of the finder: on Windows that is the
   // extensionless npm shim, which Node cannot spawn. See spawnable-command.mjs.
   const found = commandOnPath("codex");
-  if (found && !isShimFile(found)) return found;
+  if (usable(found)) installed.push(found);
   // The finder landed on our own shim, so walk past it to the real Codex the
   // shim itself execs. When there is none, report none: handing back the shim
   // would rebuild the loop this filter exists to break.
-  return resolveRealCodex()?.file;
+  else {
+    const real = resolveRealCodex()?.file;
+    if (usable(real)) installed.push(real);
+  }
+  return codexNewestInstalledBinary(installed);
 }
 
 export function codexBinaryFingerprint(binary = findCodexBinary()) {
@@ -111,6 +187,7 @@ export function codexBinaryFingerprint(binary = findCodexBinary()) {
         size: stats.size,
         mtimeMs: stats.mtimeMs,
         ctimeMs: stats.ctimeMs,
+        inode: stats.ino,
       }))
       .digest("hex");
   } catch {

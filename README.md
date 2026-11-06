@@ -1174,6 +1174,15 @@ After setup:
 Codex loads `model_catalog_json` only at app startup. If models are still
 missing, run `./bin/refresh-catalog`, fully quit Codex, and reopen it.
 
+The running router checks the account model catalog and installed Codex CLI at
+startup and every five minutes. CLI discovery recognizes the current macOS app
+bundle layout and selects the newest reported version among installed candidates,
+including PATH. Executable replacement invalidates the version cache, so an app
+update is picked up on the next check. `CODEX_BIN` or `CODEX_INSTALL_DIR` remains
+an explicit override; remove an outdated override to resume automatic selection.
+This discovers already-installed updates; it does not download or install Codex.
+An older CLI cannot replace a model cache obtained by a newer client.
+
 Large compressed Codex contexts use separate safety limits for bytes received
 on the loopback socket and bytes produced after decompression. The defaults are
 64 MiB encoded and 256 MiB decoded. Override them with

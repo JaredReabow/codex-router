@@ -38,3 +38,18 @@ recorded in CHANGELOG.md and Git history.
 - Added the Usage provider-comparison panel, context/effort groups, cache and cost coverage, timing percentiles, explicit task outcomes, exports, public price snapshots, billing reconciliation and configurable warning budgets.
 - Preserved unknown measurements and the existing usage ledger; no provider selection, paid probe or prompt/source capture is introduced.
 - Existing unrelated working changes in routing, stream repair and activity diagnostics were preserved.
+
+## 2026-11-06 — Installed Codex CLI discovery (0.6.2)
+
+- Reproduced selection of standalone Codex 0.155.1 while the desktop app shipped
+  0.166.0-alpha.6, preventing the account catalog from returning GPT-6.1 models.
+- Discover nested system/user macOS app bundles and compare installed CLI
+  versions, retaining explicit pins, shim-loop protection and the existing
+  five-minute account refresh. Re-probe changed executable identities.
+- Added regression coverage for release/prerelease ordering, replaced and broken
+  executables, app paths and explicit overrides. Preserve unrelated working edits.
+- Validation: syntax checks passed; 51 focused tests passed (one platform skip).
+  The full suite had 4,384 passes, 40 skips and one package-version mismatch;
+  after aligning Control Center metadata, its/release tests had 75 passes and
+  one platform skip. Live refresh selected 0.166.0-alpha.6 and retained both
+  GPT-6.1 models; the restarted router reported healthy version 0.6.2.
