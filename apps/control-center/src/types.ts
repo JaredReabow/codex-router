@@ -773,6 +773,7 @@ export interface RouterControlApi {
   discoverProviderModels(provider: string, options?: { refresh?: boolean }): Promise<ProviderCatalog>;
   getAccountUsage(): Promise<AccountUsage>;
   getProviderUsage(): Promise<ProviderUsageSnapshot>;
+  monitoring(action: "status" | "settings" | "outcome" | "prices" | "reconcile" | "export", input?: Record<string, unknown>): Promise<unknown>;
   getLocalModels(): Promise<LocalModelsSnapshot>;
   getVisionBridge(): Promise<VisionBridgeSnapshot>;
   getToolResultAging(): Promise<ToolResultAgingSnapshot>;

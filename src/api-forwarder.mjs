@@ -57,6 +57,7 @@ import {
 } from "./commandcode-plan.mjs";
 import { relayCommandCodeGenerate } from "./commandcode-relay.mjs";
 import { VERSION } from "./version.mjs";
+import { monitoring_context, monitoring_fetch } from "./request-monitoring.mjs";
 import { installStableFetchTransport } from "./fetch-transport.mjs";
 import { zaiCacheUsageTransform } from "./zai-cache-usage.mjs";
 import {
@@ -1477,6 +1478,7 @@ function upstreamHeaders(requestHeaders, body, apiKey, provider, extraHeaders = 
     if (HOP_BY_HOP_HEADERS.has(lower) || lower === "authorization" || lower === "x-api-key") continue;
     if (provider.protocol === "vertex" && lower === "anthropic-version") continue;
     if (provider.authProfile === "github-copilot" && providerIdentityHeaders.has(lower)) continue;
+    if (lower.startsWith("x-router-monitor-")) continue;
     if (lower.startsWith("x-msh-") || lower.startsWith("x-codex-")) continue;
     if (lower.startsWith("x-openai-") || lower === "chatgpt-account-id") continue;
     if (lower === "originator" || lower === "user-agent" || lower === "accept-encoding") {
@@ -1498,6 +1500,9 @@ function upstreamHeaders(requestHeaders, body, apiKey, provider, extraHeaders = 
   headers["User-Agent"] = `codex-router/${VERSION}`;
   headers["Accept-Encoding"] = "identity";
   Object.assign(headers, extraHeaders);
+  for (const name of Object.keys(headers)) {
+    if (name.toLowerCase().startsWith("x-router-monitor-")) delete headers[name];
+  }
   // OpenCode Go/Zen affinity must win over any session.headers merge above:
   // starting 2026-09-06 their edge may refuse requests without this header.
   applyOpenCodeSessionHeaders(headers, {
@@ -1688,6 +1693,11 @@ async function handleRequest(request, response) {
 
   const original = await readRequestBody(request);
   const normalized = normalizeBody(original, request.headers["content-type"], route);
+  normalized.monitoring = monitoring_context({ headers: { ...request.headers,
+    "thread-id": request.headers["x-router-monitor-thread"] || request.headers["thread-id"],
+  }, payload: normalized.payload, requestId: request.headers["x-router-monitor-id"],
+    provider: canonicalProviderId(normalized.provider.id), model: normalized.model.upstreamModel });
+  const monitoredFetch = (url, init) => monitoring_fetch(url, init, normalized.monitoring);
   const controller = new AbortController();
   request.once("aborted", () => controller.abort());
   response.once("close", () => {
@@ -1862,7 +1872,7 @@ async function handleRequest(request, response) {
           normalized.endpoint,
         );
         let attemptTarget = upstreamTarget(attemptSession, normalized, route, requestUrl.search);
-        const sendAttempt = () => fetch(attemptTarget, {
+        const sendAttempt = () => monitoredFetch(attemptTarget, {
           method: request.method,
           headers: upstreamHeaders(
             request.headers,
@@ -1993,7 +2003,7 @@ async function handleRequest(request, response) {
       normalized.endpoint,
     );
     target = upstreamTarget(session, normalized, route, requestUrl.search);
-    upstream = await fetch(target, {
+    upstream = await monitoredFetch(target, {
       method: request.method,
       headers: upstreamHeaders(
         request.headers,
@@ -2040,7 +2050,7 @@ async function handleRequest(request, response) {
       normalized.endpoint,
     );
     target = upstreamTarget(session, normalized, route, requestUrl.search);
-    upstream = await fetch(target, {
+    upstream = await monitoredFetch(target, {
       method: request.method,
       headers: upstreamHeaders(
         request.headers,

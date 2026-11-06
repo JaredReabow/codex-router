@@ -3632,6 +3632,10 @@ if (args.includes("--probe")) {
   await runApply();
 } else if (args[0] === "account") {
   await printAccountUsage();
+} else if (args[0] === "monitoring") {
+  const { monitoring_control } = await import("./monitoring-control.mjs");
+  const input = args[2] ? JSON.parse(args[2]) : {};
+  process.stdout.write(`${JSON.stringify(await monitoring_control(args[1] || "status", input))}\n`);
 } else if (args[0] === "provider-usage") {
   await printProviderUsage();
 } else if (args[0] === "providers") {

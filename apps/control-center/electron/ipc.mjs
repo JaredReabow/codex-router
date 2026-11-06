@@ -1539,6 +1539,16 @@ export function registerIpcHandlers({
     ["provider-usage"],
     { timeoutMs: PROVIDER_USAGE_TIMEOUT_MS },
   ));
+  handleAction("monitoring", async ({ action = "status", input = {} } = {}) => {
+    if (!["status", "settings", "outcome", "prices", "reconcile", "export"].includes(action)) {
+      throw new Error("Unknown monitoring action.");
+    }
+    // Run from the installed source root: bundled helper modules do not carry
+    // the registry and package metadata required by accounting and credentials.
+    return controlJsonRunner(["monitoring", action, JSON.stringify(input)], {
+      timeoutMs: action === "reconcile" ? 2_030_000 : 30_000,
+    });
+  });
   handle("getLocalModels", async () => runJson(["local-models", "list", "--json"], { timeoutMs: 20_000 }));
   handle("getVisionBridge", async () => runJson(["vision-bridge", "status"], { timeoutMs: 20_000 }));
   handle("getToolResultAging", async () => runJson(["tool-result-aging", "status"], { timeoutMs: 20_000 }));

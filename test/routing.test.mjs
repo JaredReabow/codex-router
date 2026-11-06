@@ -13271,3 +13271,72 @@ test("an in-contract Chat route still carries its reasoning as thinking", async 
     rmSync(stateDir, { recursive: true, force: true });
   }
 });
+
+test("OpenRouter monitoring captures raw billing and strips internal correlation before external forwarding", async () => {
+  const state = mkdtempSync(path.join(os.tmpdir(), "monitor-forwarder-"));
+  const observed = [];
+  const upstream = await mockServer(async (request, response) => {
+    observed.push({ headers: request.headers, body: await bodyJson(request) });
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.end('data: {"id":"gen-monitor-test","provider":"OpenInference","model":"deepseek/deepseek-v4.1-flash-1017","choices":[{"delta":{"content":"private fixture"}}],"usage":{"prompt_tokens":1000,"prompt_tokens_details":{"cached_tokens":950},"completion_tokens":20,"cost":0.000123}}\n\ndata: [DONE]\n\n');
+  });
+  const port = await openPort();
+  const forwarder = run("api-forwarder.mjs", {
+    MODEL_ROUTER_STATE_DIR: state, CODEX_HOME: state,
+    CODEX_ROUTER_API_PORT: String(port), OPENROUTER_API_BASE_URL: `http://127.0.0.1:${upstream.port}/v1`,
+    OPENROUTER_API_KEY: "TEST_OPENROUTER_API_KEY", KIMI_PROXY_QUIET: "1",
+  });
+  try {
+    await waitFor(`http://127.0.0.1:${port}/health`, forwarder, { Authorization: `Bearer ${INTERNAL_KEY}` });
+    const reply = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+      method: "POST", headers: { Authorization: `Bearer ${INTERNAL_KEY}`, "content-type": "application/json",
+        "x-router-monitor-id": "request-monitor-fixture", "x-router-monitor-session": "session-monitor-fixture" },
+      body: JSON.stringify({ model: "openrouter-deepseek-v4-1-flash", messages: [{ role: "user", content: "private request fixture" }] }),
+    });
+    assert.equal(reply.status, 200); assert.match(await reply.text(), /gen-monitor-test/);
+    assert.equal(observed[0].headers["x-router-monitor-id"], undefined);
+    assert.equal(observed[0].headers["x-router-monitor-session"], undefined);
+    const file = path.join(state, "request-monitoring", `${new Date().toISOString().slice(0, 10)}.jsonl`);
+    const text = readFileSync(file, "utf8"); const event = JSON.parse(text.trim());
+    assert.equal(event.requestId, "request-monitor-fixture"); assert.equal(event.sessionId, "session-monitor-fixture");
+    assert.equal(event.upstreamHost, "OpenInference"); assert.equal(event.costUsd, .000123);
+    assert.equal(event.cachedInputTokens, 950); assert.equal(event.generationId, "gen-monitor-test");
+    assert.doesNotMatch(text, /private fixture|private request fixture|TEST_OPENROUTER_API_KEY/);
+  } finally { await stopChild(forwarder); await closeServer(upstream.server); rmSync(state, { recursive: true, force: true }); }
+});
+
+test("Router monitoring correlates gateway headers and records caller settings without prompt capture", async () => {
+  const state = mkdtempSync(path.join(os.tmpdir(), "monitor-router-"));
+  const bodies = [];
+  const gateway = await mockServer(async (request, response) => {
+    if (request.url === "/responses") {
+      const body = await bodyJson(request); bodies.push(body);
+      json(response, 200, { id: "resp-fixture", object: "response", status: "completed", output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "done" }] }], usage: { input_tokens: 100, output_tokens: 2 } });
+    } else json(response, 200, { ok: true });
+  });
+  const port = await openPort();
+  const router = run("router.mjs", {
+    MODEL_ROUTER_STATE_DIR: state, CODEX_HOME: state, CODEX_ROUTER_PORT: String(port),
+    CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}`,
+    CODEX_ROUTER_GATEWAY_HEALTH_URL: `http://127.0.0.1:${gateway.port}/health`,
+    CODEX_ROUTER_API_HEALTH_URL: `http://127.0.0.1:${gateway.port}/health`,
+    CODEX_ROUTER_OAUTH_HEALTH_URL: `http://127.0.0.1:${gateway.port}/health`,
+    CODEX_ROUTER_GROK_OAUTH_HEALTH_URL: `http://127.0.0.1:${gateway.port}/health`,
+    OPENROUTER_API_KEY: "TEST_OPENROUTER_API_KEY", CODEX_ROUTER_QUIET: "1",
+  });
+  try {
+    await waitFor(`http://127.0.0.1:${port}/health`, router);
+    const reply = await fetch(`${routerBase(port)}/responses`, { method: "POST", headers: { "content-type": "application/json", "thread-id": "11111111-2222-3333-4444-555555555555" },
+      body: JSON.stringify({ model: "openrouter/deepseek-v4.1-flash", input: "do not persist my prompt", reasoning: { effort: "high" } }) });
+    assert.equal(reply.status, 200); await reply.text();
+    assert.ok(bodies[0].extra_headers["x-router-monitor-id"]);
+    const ledger = path.join(state, "request-monitoring", `${new Date().toISOString().slice(0, 10)}.jsonl`);
+    const deadline = Date.now() + 2000;
+    while (!existsSync(ledger) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+    const events = readFileSync(ledger, "utf8");
+    const row = JSON.parse(events.trim());
+    assert.equal(row.requestId, bodies[0].extra_headers["x-router-monitor-id"]);
+    assert.equal(row.reasoningEffort, "high"); assert.equal(row.threadId, "11111111-2222-3333-4444-555555555555");
+    assert.doesNotMatch(events, /do not persist my prompt/);
+  } finally { await stopChild(router); await closeServer(gateway.server); rmSync(state, { recursive: true, force: true }); }
+});

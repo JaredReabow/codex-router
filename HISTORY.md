@@ -31,3 +31,10 @@ recorded in CHANGELOG.md and Git history.
   to this checkout's JSON byte-counting convention.
 - Added the five upstream regression cases for cancellation, completed-item
   replay, late interrupts, JSON backpressure, and bounded interruption state.
+
+## 2026-11-06 — Provider comparison monitoring (0.6.1)
+
+- Added passive raw-provider accounting before gateway translation and separate caller timing records, with local request/session correlation stripped before egress.
+- Added the Usage provider-comparison panel, context/effort groups, cache and cost coverage, timing percentiles, explicit task outcomes, exports, public price snapshots, billing reconciliation and configurable warning budgets.
+- Preserved unknown measurements and the existing usage ledger; no provider selection, paid probe or prompt/source capture is introduced.
+- Existing unrelated working changes in routing, stream repair and activity diagnostics were preserved.

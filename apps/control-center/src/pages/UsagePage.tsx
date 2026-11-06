@@ -30,6 +30,7 @@ import type {
 } from "../types";
 import type { Translate } from "../i18n";
 import "./usage-status.css";
+import { MonitoringPanel } from "../WEB_UI";
 
 type UsageBucketWithRequests = UsageBucket & {
   requests?: number;
@@ -433,6 +434,7 @@ export function UsagePage({
           </div>
         </>
       )}
+      <MonitoringPanel api={api} refreshing={refreshing} />
     </div>
   );
 }

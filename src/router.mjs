@@ -254,6 +254,7 @@ import {
   toolResultAgingEnabled,
 } from "./tool-result-aging-state.mjs";
 import { VERSION } from "./version.mjs";
+import { monitoring_context, monitoring_internal_headers, monitoring_record_request } from "./request-monitoring.mjs";
 import {
   nativeSessionHeaders,
   nativeSessionTokenMatches,
@@ -640,6 +641,7 @@ function beginRequestActivity({ request, response, controller } = {}) {
 }
 
 function recordObservedUsage(fields, diagnostics) {
+  monitoring_record_request({ ...fields, requestId: diagnostics?.requestId }, diagnostics?.monitoring);
   recordUsageEvent({
     ...fields,
     ...usageDiagnosticMetadata(diagnostics),
@@ -3738,10 +3740,18 @@ async function buildRoutedRequest({ request, payload, route, agedInput }) {
     delete routed.reasoning_effort;
   }
   if (rejectsWebSearchOptions(route)) delete routed.web_search_options;
+  const monitorHeaders = provider?.kind === "openai-compatible" ? monitoring_internal_headers(request.headers["x-router-monitor-id"], {
+    sessionId: request.headers["x-router-monitor-session"], threadId: request.headers["x-router-monitor-thread"],
+  }) : {};
+  // LiteLLM consumes extra_headers on the local hop. The API forwarder strips
+  // these correlation headers before contacting any external provider.
+  if (chatCompletionsProvider && Object.keys(monitorHeaders).length) {
+    routed.extra_headers = { ...routed.extra_headers, ...monitorHeaders };
+  }
   return {
     body: Buffer.from(JSON.stringify(routed), "utf8"),
     target: routedResponsesTarget(route),
-    headers: routedHeaders(),
+    headers: { ...routedHeaders(), ...monitorHeaders },
     // The exact mode used while constructing this body. Failover compares it
     // with the immutable source contract as well as live state immediately
     // before send, so transient sidecar changes cannot validate stale bytes.
@@ -4042,6 +4052,7 @@ async function handleResponses(request, response, requestUrl) {
     return upstream;
   };
   const diagnostics = { requestId: activity.requestId };
+  request.headers["x-router-monitor-id"] = activity.requestId;
   let clientGone = false;
   let requestedModel = "";
   let route;
@@ -4090,6 +4101,11 @@ async function handleResponses(request, response, requestUrl) {
     const body = await decodeBody(encoded, request.headers["content-encoding"]);
     let payload = await parseBodyAsync(body);
     controller.signal.throwIfAborted();
+    diagnostics.monitoring = monitoring_context({ headers: request.headers, payload, requestId: activity.requestId });
+    const session = activityMetadataFromHeaders(request.headers);
+    if (session.sessionId) diagnostics.monitoring.sessionId = session.sessionId;
+    request.headers["x-router-monitor-session"] = diagnostics.monitoring.sessionId;
+    request.headers["x-router-monitor-thread"] = diagnostics.monitoring.threadId;
     requestedModel = typeof payload.model === "string" ? payload.model : "";
     let registeredRoute =
       MODEL_BY_SLUG.get(requestedModel) ??
@@ -5433,6 +5449,7 @@ async function handleNativeRequest(request, response, requestUrl, defaultModel) 
   const controller = new AbortController();
   const activity = beginRequestActivity({ request, response, controller });
   const diagnostics = { requestId: activity.requestId };
+  request.headers["x-router-monitor-id"] = activity.requestId;
   let clientGone = false;
   let requestedModel = defaultModel;
   let servingProvider = "openai";
@@ -5683,6 +5700,7 @@ async function handleEmbeddings(request, response, requestUrl) {
   const controller = new AbortController();
   const activity = beginRequestActivity({ request, response, controller });
   const diagnostics = { requestId: activity.requestId };
+  request.headers["x-router-monitor-id"] = activity.requestId;
   let clientGone = false;
   let requestedModel = "";
   let route;
@@ -5815,6 +5833,7 @@ async function handleDecisions(request, response, requestUrl) {
   const controller = new AbortController();
   const activity = beginRequestActivity({ request, response, controller });
   const diagnostics = { requestId: activity.requestId };
+  request.headers["x-router-monitor-id"] = activity.requestId;
   let clientGone = false;
   let requestedModel = "";
   let route;

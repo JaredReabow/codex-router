@@ -46,6 +46,7 @@ import {
 } from "../apps/control-center/electron/lifecycle-state.mjs";
 import {
   openBrowserCommand,
+  registerIpcHandlers,
   projectChatGPTSubscriptionLoginAttempts,
 } from "../apps/control-center/electron/ipc.mjs";
 import {
@@ -2571,4 +2572,20 @@ test("router children inherit the proxy opt-in this install recorded", async () 
   assert.doesNotMatch(runner, /childEnvironment\.HTTPS?_PROXY = /);
   // It applies only to the install that recorded it.
   assert.match(runner, /recordedInstall\?\.sourceRoot === sourceRoot\s*&&\s*recordedInstall\.proxyOptIn/);
+});
+
+
+test("monitoring IPC invokes the installed CLI and rejects arbitrary operations", async () => {
+  const handlers = new Map(), calls = [];
+  const expected = { requestCount: 3, attemptCount: 4 };
+  registerIpcHandlers({
+    ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+    BrowserWindow: { getAllWindows: () => [] }, shell: {}, senderGuard: () => true,
+    controlJsonRunner: async (args, options) => { calls.push({ args, options }); return expected; },
+  });
+  const monitoring = handlers.get("router-control:monitoring");
+  assert.deepEqual(await monitoring({}, { action: "status", input: { days: 7 } }), expected);
+  assert.deepEqual(calls[0].args, ["monitoring", "status", '{"days":7}']);
+  await assert.rejects(monitoring({}, { action: "service", input: { command: "stop" } }), /Unknown monitoring action/);
+  assert.equal(calls.length, 1);
 });

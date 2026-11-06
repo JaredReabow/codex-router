@@ -1405,10 +1405,18 @@ test("non-Groq routes preserve the full expanded and discovered tool surface", a
 test("routed request flattens every namespace to the gateway and restores calls to the client", async () => {
   const first = await scenario();
   const second = await scenario();
-  // Determinism: two identical runs produce byte-identical outgoing and
-  // incoming bodies.
+  // Model-visible content stays deterministic. Private per-request correlation
+  // on the internal gateway hop is intentionally unique and stripped at egress.
   assert.equal(second.gatewayBodies.length, 1);
-  assert.deepEqual(second.gatewayBodies, first.gatewayBodies);
+  assert.notEqual(second.gatewayBodies[0].extra_headers["x-router-monitor-id"], first.gatewayBodies[0].extra_headers["x-router-monitor-id"]);
+  const modelVisible = bodies => bodies.map(body => {
+    const copy = structuredClone(body);
+    delete copy.extra_headers["x-router-monitor-id"];
+    delete copy.extra_headers["x-router-monitor-session"];
+    delete copy.extra_headers["x-router-monitor-thread"];
+    return copy;
+  });
+  assert.deepEqual(modelVisible(second.gatewayBodies), modelVisible(first.gatewayBodies));
   assert.equal(second.clientBody, first.clientBody);
 
   const outgoing = first.gatewayBodies[0];

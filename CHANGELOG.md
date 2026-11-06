@@ -1,6 +1,12 @@
 # Changelog
 
 ## Unreleased
+
+### 0.6.1 — Provider comparison monitoring
+- Capture actual upstream host, generation IDs, reported OpenRouter costs, cache/reasoning tokens, response times and per-attempt failures before gateway translation.
+- Compare routes and context/effort groups in Usage, with explicit task assessments, coverage warnings, configurable UTC budgets and fee assumptions, metadata exports, price drift snapshots and generation reconciliation.
+- Keep caller requests separate from billing attempts, preserve unknown data, and record no prompt, tool-argument, source or response text.
+
 - **Interrupting a Codex response no longer breaks the next turn.** Backported
   upstream `b850d97d` to accept `response.interrupt` immediately, cancel the
   active HTTP stream, discard partial items, and preserve completed output for

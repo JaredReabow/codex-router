@@ -385,6 +385,22 @@ const bridgeSource = String.raw`
         summary: { lifetimeTokens: 24000, peakDailyTokens: 24000, currentStreakDays: 1 },
       };
     },
+    monitoring: async (action, input = {}) => {
+      record("monitoring", action, input);
+      if (action === "export") return { content: "kind,costUsd\\nrequest,0.25", format: input.format };
+      if (action !== "status") return { saved: true };
+      const row = { id: "openrouter | OpenInference | deepseek", requests: 10, errors: 1, cancellations: 0,
+        costUsd: 0.25, costWithFeeUsd: 0.26375, costCoveredRequests: 9, cacheHitPercent: 98,
+        cacheCoveredRequests: 9, p50FirstTokenMs: 100, p95FirstTokenMs: 300, p50VisibleTokenMs: 200,
+        p95DurationMs: 1000, p50TokensPerSecond: 50, warnings: [] };
+      return { generatedAt: "2026-11-06T10:00:00Z", days: input.days || 30,
+        settings: { enabled: true, feePercent: 5.5, minimumSamples: 20, cacheWarningPercent: 90,
+          errorWarningPercent: 5, dailyBudgetUsd: null, monthlyBudgetUsd: null },
+        requestCount: 10, attemptCount: 11, unlinkedAttempts: 1, writeFailures: 0,
+        routes: [row], matched: [row], callerRoutes: [row], sessions: [{ ...row, id: "session-test", outcome: "unassessed" }],
+        recent: [], alerts: [], dailyBudget: { spendUsd: .25, limitUsd: null, unknownCosts: 1 },
+        monthlyBudget: { spendUsd: .25, limitUsd: null, unknownCosts: 1 }, limitations: ["Task outcomes require assessment"] };
+    },
     getProviderUsage: async () => {
       providerUsageReads += 1;
       const read = providerUsageReads;
@@ -1102,6 +1118,8 @@ test("fallback-only splits do not claim account breakdown or a complete range mi
   const pageErrors = [];
   try {
     const page = await newEnglishTestPage(browser, { viewport: { width: 1280, height: 840 } });
+    // This fixture contains August account buckets; keep its calendar window stable.
+    await page.clock.setFixedTime(new Date("2026-08-30T12:00:00Z"));
     page.setDefaultTimeout(10_000);
     page.on("pageerror", (error) => pageErrors.push(error.message));
     page.on("console", (message) => {
@@ -1304,4 +1322,33 @@ test("health polling and core refresh share latest-wins ordering", { timeout: 12
     await browser.close();
     await close();
   }
+});
+
+test("monitoring comparison exposes measured coverage, budget settings, outcomes and exports", { timeout: 120_000 }, async () => {
+  const { url, close } = await serveRenderer();
+  const browser = await chromium.launch({ executablePath: chromiumPath, headless: true,
+    args: process.platform === "linux" ? ["--no-sandbox"] : [] });
+  try {
+    const page = await newEnglishTestPage(browser, { viewport: { width: 1440, height: 1000 } });
+    await page.goto(url);
+    await page.getByRole("button", { name: "Usage", exact: true }).click();
+    const panel = page.getByRole("region", { name: "Provider comparison monitoring" });
+    await panel.getByText("openrouter | OpenInference | deepseek", { exact: true }).waitFor();
+    assert.match(await panel.innerText(), /98\.00%/);
+    assert.match(await panel.innerText(), /9\/10/);
+    await panel.getByLabel("Monitoring period").selectOption("7");
+    await page.waitForFunction(() => window.routerControlTest.calls().some(c => c.name === "monitoring" && c.args[0] === "status" && c.args[1].days === 7));
+    await panel.getByText("Monitoring settings and budgets", { exact: true }).click();
+    await panel.getByLabel("dailyBudgetUsd", { exact: true }).fill("12.50");
+    await panel.getByRole("button", { name: "Save monitoring settings" }).click();
+    await page.waitForFunction(() => window.routerControlTest.calls().some(c => c.name === "monitoring" && c.args[0] === "settings" && c.args[1].dailyBudgetUsd === 12.5));
+    await panel.getByText("Task acceptance", { exact: true }).click();
+    await panel.getByLabel("Task session ID").fill("session-test");
+    await panel.getByLabel("Task outcome").selectOption("needs-correction");
+    await panel.getByRole("button", { name: "Record outcome" }).click();
+    await page.waitForFunction(() => window.routerControlTest.calls().some(c => c.name === "monitoring" && c.args[0] === "outcome" && c.args[1].outcome === "needs-correction"));
+    const download = page.waitForEvent("download");
+    await panel.getByRole("button", { name: "Export CSV" }).click();
+    assert.match((await download).suggestedFilename(), /router-monitoring-7d-.*\.csv/);
+  } finally { await browser.close(); await close(); }
 });

@@ -2589,3 +2589,7 @@ References: [Kimi Code CLI OAuth](https://www.kimi.com/help/kimi-code/cli-gettin
 and [opencodex](https://github.com/lidge-jun/opencodex).
 
 MIT licensed. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).
+
+### Provider comparison monitoring
+
+Usage now includes a provider-comparison panel with raw upstream accounting, cache and cost coverage, response timing, session outcomes, exports and configurable alerts. See [the monitoring guide](docs/request-monitoring.md) for measurement limits and CLI commands.
