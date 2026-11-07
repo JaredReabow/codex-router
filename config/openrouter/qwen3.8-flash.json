@@ -7,7 +7,7 @@
       "upstreamModel": "qwen/qwen3.8-flash",
       "provider": "openrouter",
       "listed": true,
-      "displayName": "Qwen3.8 Flash (OpenRouter)",
+      "displayName": "OpnRtr Qwen3.8 Flash (OpenRouter)",
       "description": "Qwen3.8 Flash through OpenRouter. The 1M-context route with vision input and adaptive reasoning.",
       "priority": 108,
       "defaultEffort": "high",

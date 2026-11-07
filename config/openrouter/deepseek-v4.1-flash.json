@@ -7,7 +7,7 @@
       "upstreamModel": "deepseek/deepseek-v4.1-flash",
       "provider": "openrouter",
       "listed": true,
-      "displayName": "DeepSeek V4.1 Flash (OpenRouter)",
+      "displayName": "OpnRtr DeepSeek V4.1 Flash (OpenRouter)",
       "description": "DeepSeek V4.1 Flash through OpenRouter with a 1M context window, image input, and low/high/max reasoning.",
       "priority": 74,
       "defaultEffort": "high",

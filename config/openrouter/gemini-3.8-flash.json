@@ -7,7 +7,7 @@
       "upstreamModel": "google/gemini-3.8-flash",
       "provider": "openrouter",
       "listed": true,
-      "displayName": "Gemini 3.8 Flash (OpenRouter)",
+      "displayName": "OpnRtr Gemini 3.8 Flash (OpenRouter)",
       "description": "Google Gemini 3.8 Flash through OpenRouter.",
       "priority": 75,
       "defaultEffort": "medium",

@@ -7,7 +7,7 @@
       "upstreamModel": "anthropic/claude-fable-5.1",
       "provider": "openrouter",
       "listed": true,
-      "displayName": "Claude Fable 5.1 (OpenRouter)",
+      "displayName": "OpnRtr Claude Fable 5.1 (OpenRouter)",
       "description": "Anthropic Claude Fable 5.1 through OpenRouter.",
       "priority": 77,
       "defaultEffort": "high",

@@ -7,7 +7,7 @@
       "upstreamModel": "z-ai/glm-5.3",
       "provider": "openrouter",
       "listed": true,
-      "displayName": "GLM-5.3 (OpenRouter)",
+      "displayName": "OpnRtr GLM-5.3 (OpenRouter)",
       "description": "GLM-5.3 through OpenRouter. The 1M-context route uses the model's low/high/max reasoning ladder with mandatory thinking.",
       "priority": 102,
       "defaultEffort": "max",

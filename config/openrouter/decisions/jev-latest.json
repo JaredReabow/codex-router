@@ -7,7 +7,7 @@
       "upstreamModel": "~typesafe/jev-latest",
       "provider": "openrouter-decisions",
       "listed": false,
-      "displayName": "Jev Latest (OpenRouter)",
+      "displayName": "OpnRtr Jev Latest (OpenRouter)",
       "description": "OpenRouter Decisions judge for structured keep/drop compaction questions.",
       "priority": 100,
       "contextWindow": 32768,

@@ -53,3 +53,8 @@ recorded in CHANGELOG.md and Git history.
   after aligning Control Center metadata, its/release tests had 75 passes and
   one platform skip. Live refresh selected 0.166.0-alpha.6 and retained both
   GPT-6.1 models; the restarted router reported healthy version 0.6.2.
+
+## 2026-11-07 — OpenRouter model name prefix
+
+- Add `OpnRtr` to all checked-in OpenRouter and Decisions model display names, including free entries, and update this installation's curated OpenRouter labels.
+- Preserve model slugs, upstream endpoints/presets, visibility, pricing metadata, reasoning settings, and every other provider label.

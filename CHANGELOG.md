@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Prefix OpenRouter model display names with `OpnRtr`, including Decisions and free models; keep route identities and behavior unchanged.
+
 ### 0.6.2 — Discover current installed Codex CLIs
 - Recognize the nested ChatGPT/Codex macOS CLI bundle and select the newest
   reported installed CLI instead of the first matching path. Preserve explicit

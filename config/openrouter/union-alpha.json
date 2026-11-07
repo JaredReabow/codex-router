@@ -7,7 +7,7 @@
       "upstreamModel": "stealth/union-alpha",
       "provider": "openrouter",
       "listed": true,
-      "displayName": "Union Alpha (OpenRouter)",
+      "displayName": "OpnRtr Union Alpha (OpenRouter)",
       "description": "Union Alpha through OpenRouter (`stealth/union-alpha`). OpenRouter publishes a 262,144-token window, 131,072-token output limit, text and image input, and currently prices it at zero. Codex compact reserves that output budget. OpenRouter does not advertise a reasoning-effort parameter, so the stored single high level is this repository's conservative default. Its endpoint record accepts tool_choice auto only.",
       "priority": 71,
       "defaultEffort": "high",

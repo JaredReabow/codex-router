@@ -7,7 +7,7 @@
       "upstreamModel": "tencent/hy4-preview",
       "provider": "openrouter",
       "listed": true,
-      "displayName": "Hy4 Preview (OpenRouter)",
+      "displayName": "OpnRtr Hy4 Preview (OpenRouter)",
       "description": "Tencent Hy4 Preview through OpenRouter.",
       "priority": 100,
       "defaultEffort": "high",
