@@ -276,7 +276,7 @@ async function verifySignedOutTurn(binary, { initialProvider = "openai" } = {}) 
     request.setEncoding("utf8");
     request.on("data", (chunk) => { body += chunk; });
     request.on("end", () => {
-      requests.push({ body: JSON.parse(body), headers: request.headers, url: request.url });
+      requests.push({ body: JSON.parse(body), headers: request.headers, url: request.url, method: request.method });
       response.writeHead(200, { "content-type": "text/event-stream" });
       response.end(responseStream(requests.at(-1).body.model));
     });
@@ -340,31 +340,26 @@ async function verifySignedOutTurn(binary, { initialProvider = "openai" } = {}) 
     assert.doesNotMatch(config, /\[model_providers\.openai\]/);
     assert.match(config, new RegExp(`\\[model_providers\\.${expectedProvider}\\.auth\\]`));
     assert.match(config, /caller-key-auth-command\.mjs/);
+    assert.doesNotMatch(config, /^supports_websockets = true$/m);
     assert.doesNotMatch(config, new RegExp(CALLER_KEY));
     if (initialProvider !== "openai") {
       assert.match(config, /requires_openai_auth = false/);
+      assert.match(config, /^supports_websockets = false$/m);
       assert.doesNotMatch(config, /direct\.invalid/);
     }
 
     const notifications = await runAppServerTurn(binary, env, model, expectedProvider);
     assert.equal(requests.length, 1);
-    if (upgrades.length > 0) {
-      assert.equal(upgrades.length, 1);
-      assert.equal(upgrades[0].url, "/v1/responses");
-      assert.equal(upgrades[0].headers.authorization, `Bearer ${CALLER_KEY}`);
-      assert.equal(
-        requests[0].url,
-        `/_codex-router/${CALLER_KEY}/v1/responses`,
-      );
-      assert.equal(
-        requests[0].headers.authorization,
-        undefined,
-        "the caller capability stops at the WebSocket edge",
-      );
-    } else {
-      assert.equal(requests[0].url, "/v1/responses");
-      assert.equal(requests[0].headers.authorization, `Bearer ${CALLER_KEY}`);
-    }
+    // A successful turn alone is insufficient: the create-only adapter can
+    // complete a simple request but rejects newer steering/control messages.
+    // Managed clients must choose HTTP directly, without attempting an upgrade.
+    assert.equal(upgrades.length, 0, "managed Codex providers must use HTTP/SSE");
+    assert.equal(requests[0].method, "POST");
+    assert.equal(requests[0].url, "/v1/responses");
+    assert.equal(requests[0].headers.authorization, `Bearer ${CALLER_KEY}`);
+    assert.equal(requests[0].body.stream, true);
+    const completed = notifications.find((message) => message.method === "turn/completed");
+    assert.equal(completed?.params?.turn?.status, "completed");
     assert.equal(requests[0].body.model, model);
     assert.match(JSON.stringify(notifications), new RegExp(MARKER));
   } finally {

@@ -1,0 +1,1 @@
+- Use HTTP streaming for managed Codex providers until the local WebSocket adapter supports modern control frames; retain ownership of older WebSocket-enabled blocks when upgrading. This prevents create-only protocol rejections during worker and steering turns. Existing loaded Codex sessions must be reloaded to pick up the changed provider capability.

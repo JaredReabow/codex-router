@@ -696,7 +696,10 @@ function managedSignedProviderBlock(providerId, baseUrl) {
     // the provider half enabled; the catalog's supports_search_tool field is
     // the per-model gate.
     "supports_standalone_web_search = true",
-    "supports_websockets = true",
+    // The local adapter currently implements response.create only. Newer
+    // Codex clients also send control/steering frames; use HTTP/SSE until
+    // that complete WebSocket protocol is supported.
+    "supports_websockets = false",
     signedProviderEndMarker,
   ].join("\n");
 }
@@ -764,16 +767,18 @@ function managedLoginFreeProviderBlock(providerId, baseUrl) {
     'wire_api = "responses"',
     "requires_openai_auth = false",
     "supports_standalone_web_search = true",
-    "supports_websockets = true",
+    // The local adapter currently implements response.create only. Newer
+    // Codex clients also send control/steering frames; use HTTP/SSE until
+    // that complete WebSocket protocol is supported.
+    "supports_websockets = false",
     managedCallerAuthBlock(providerId),
     signedProviderEndMarker,
   ].join("\n");
 }
 
-// The immediately previous managed shape advertised the HTTP fallback even
-// after standalone search was added. Accept that exact signed block during an
-// update so enabling the new edge transport cannot turn router-owned state
-// into apparent user drift.
+// Retain the historical HTTP fallback shapes for ownership matching. They
+// currently coincide with the preferred HTTP transport; accepting these exact
+// blocks keeps older managed installations distinguishable from user edits.
 function managedSignedProviderBlockHttpFallback(providerId, baseUrl) {
   const headerId = /^[A-Za-z0-9_-]+$/.test(providerId)
     ? providerId
@@ -847,6 +852,11 @@ function managedLoginFreeProviderBlockLegacy(providerId, baseUrl) {
 function managedSignedProviderBlockMatches(actual, providerId, baseUrl) {
   return [
     managedSignedProviderBlock(providerId, baseUrl),
+    // Recognize the last WebSocket-enabled managed block so upgrades retain
+    // ownership and restoration of the user's original provider settings.
+    managedSignedProviderBlock(providerId, baseUrl).replace(
+      "supports_websockets = false", "supports_websockets = true",
+    ),
     managedSignedProviderBlockHttpFallback(providerId, baseUrl),
     managedSignedProviderBlockLegacy(providerId, baseUrl),
   ].includes(actual);
@@ -855,6 +865,9 @@ function managedSignedProviderBlockMatches(actual, providerId, baseUrl) {
 function managedLoginFreeProviderBlockMatches(actual, providerId, baseUrl) {
   return [
     managedLoginFreeProviderBlock(providerId, baseUrl),
+    managedLoginFreeProviderBlock(providerId, baseUrl).replace(
+      "supports_websockets = false", "supports_websockets = true",
+    ),
     managedLoginFreeProviderBlockHttpFallback(providerId, baseUrl),
     managedLoginFreeProviderBlockLegacy(providerId, baseUrl),
   ].includes(actual);
