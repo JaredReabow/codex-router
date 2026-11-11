@@ -58,3 +58,9 @@ recorded in CHANGELOG.md and Git history.
 
 - Add `OpnRtr` to all checked-in OpenRouter and Decisions model display names, including free entries, and update this installation's curated OpenRouter labels.
 - Preserve model slugs, upstream endpoints/presets, visibility, pricing metadata, reasoning settings, and every other provider label.
+
+## 2026-11-11 — Native rejection diagnostic coverage (0.6.3)
+
+- Traced the reported fileExplorerMac Codex-chat interruption to native OpenAI HTTP 400 with only {"detail":"Bad Request"}; no reproducible malformed field or local root-cause defect was established.
+- Add an exact outgoing-wire-body hash and bounded, content-free structural/pairing metadata to native rejection logs without modifying requests, responses or retry behavior. Capture no raw payload, message, argument, output, ciphertext or arbitrary-header values.
+- Implement in an isolated checkout; shared installed router work, credentials, accounts, chat databases and running services remain untouched. Local tests do not establish a repair of the original upstream rejection or deployment to the shared runtime.

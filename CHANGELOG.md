@@ -4,6 +4,10 @@
 
 - Prefix OpenRouter model display names with `OpnRtr`, including Decisions and free models; keep route identities and behavior unchanged.
 
+### 0.6.3 — Native rejection diagnostics
+- Add content-free native HTTP error diagnostics with a SHA-256 of the exact outgoing wire body, bounded input/tool counts and call/result pairing summaries, and a validated upstream request ID.
+- Preserve request bytes, response status/body and retry policy; retain no prompts, arguments, tool outputs, ciphertext or arbitrary headers. This diagnostic coverage does not establish or repair the cause of an opaque upstream Bad Request.
+
 ### 0.6.2 — Discover current installed Codex CLIs
 - Recognize the nested ChatGPT/Codex macOS CLI bundle and select the newest
   reported installed CLI instead of the first matching path. Preserve explicit

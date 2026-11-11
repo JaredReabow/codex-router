@@ -80,6 +80,7 @@ import {
 } from "./grok-tool-facade.mjs";
 import { applyGrokFileToolsOverlay } from "./instruction-overlays.mjs";
 import { ResponsesHeartbeatTransform } from "./responses-heartbeat.mjs";
+import { nativeRequestDiagnostics_observer } from "./native-request-diagnostics.mjs";
 import { messagePhaseTransform } from "./message-phase.mjs";
 import { translatedToolMessageCompatTransform } from "./deepseek-tool-message-compat.mjs";
 import {
@@ -4069,6 +4070,7 @@ async function handleResponses(request, response, requestUrl) {
   let usage;
   let estimatedInputTokens;
   let toolResultAging;
+  let nativeRequestDiagnostic;
   let pendingInterrupts = [];
   let emptyCompletion = false;
   let emptyCompletionRetried = false;
@@ -4438,6 +4440,7 @@ async function handleResponses(request, response, requestUrl) {
         Buffer.from(JSON.stringify(native), "utf8"),
         headers,
       );
+      nativeRequestDiagnostic = nativeRequestDiagnostics_observer(routedBody, native);
     }
 
     // `routedBody` is a fully materialized Buffer -- plain JSON, or the zstd
@@ -4473,6 +4476,7 @@ async function handleResponses(request, response, requestUrl) {
     );
     upstreamRetries = retries;
     upstreamStatus = upstream.status;
+    nativeRequestDiagnostic?.(upstream.status, upstream.headers.get("x-oai-request-id"));
     // Time until the upstream chain answered the request. Everything before
     // this is router-side work (body read, normalization, flattening, vision
     // bridge) plus the upstream's own time to produce response headers. For a
